@@ -1,6 +1,7 @@
 package de.markusfisch.android.shadereditor.opengl;
 
 import android.opengl.GLES20;
+import android.opengl.GLES31;
 
 import androidx.annotation.NonNull;
 
@@ -37,6 +38,23 @@ class Program {
 
 			// Same as above.
 			GLES20.glDeleteShader(vs);
+		}
+
+		return p;
+	}
+
+	static int loadComputeProgram(String computeShader) {
+		int cs, p = 0;
+
+		if ((cs = compileShader(
+				GLES31.GL_COMPUTE_SHADER,
+				computeShader)) != 0) {
+			p = linkProgram(cs);
+
+			// Mark shader object as deleted so it gets
+			// deleted as soon as glDeleteProgram() does
+			// detach it.
+			GLES20.glDeleteShader(cs);
 		}
 
 		return p;

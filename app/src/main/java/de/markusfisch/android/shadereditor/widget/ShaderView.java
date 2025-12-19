@@ -66,7 +66,8 @@ public class ShaderView extends GLSurfaceView {
 		// On some devices it's important to setEGLContextClientVersion()
 		// even if the docs say it's not used when setEGLContextFactory()
 		// is called. Not doing so will crash the app (e.g. on the FP1).
-		setEGLContextClientVersion(2);
+		// Request GLES 3.1 for compute shader support
+		setEGLContextClientVersion(3);
 		setEGLContextFactory(new ContextFactory(renderer));
 		setRenderer(renderer);
 		setRenderMode(renderMode);
@@ -90,6 +91,7 @@ public class ShaderView extends GLSurfaceView {
 		public EGLContext createContext(EGL10 egl, EGLDisplay display,
 				EGLConfig eglConfig) {
 			int EGL_CONTEXT_CLIENT_VERSION = 0x3098;
+			// Request GLES 3.1 for compute shader support
 			EGLContext context = egl.eglCreateContext(display, eglConfig,
 					EGL10.EGL_NO_CONTEXT, new int[]{
 							EGL_CONTEXT_CLIENT_VERSION,
@@ -101,12 +103,8 @@ public class ShaderView extends GLSurfaceView {
 				renderer.setVersion(3);
 				return context;
 			}
-			return egl.eglCreateContext(display, eglConfig,
-					EGL10.EGL_NO_CONTEXT, new int[]{
-							EGL_CONTEXT_CLIENT_VERSION,
-							2,
-							EGL10.EGL_NONE
-					});
+			// Should not happen if device supports GLES 3.1 as required
+			throw new RuntimeException("Failed to create GLES 3 context");
 		}
 
 		@Override

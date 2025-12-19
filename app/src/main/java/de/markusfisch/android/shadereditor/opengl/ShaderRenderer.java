@@ -11,6 +11,7 @@ import android.hardware.SensorManager;
 import android.media.AudioManager;
 import android.opengl.GLES11Ext;
 import android.opengl.GLES20;
+import android.opengl.GLES31;
 import android.opengl.GLSurfaceView;
 import android.opengl.GLUtils;
 import android.os.BatteryManager;
@@ -181,6 +182,11 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 			Pattern.MULTILINE);
 	private static final Pattern PATTERN_GLES3_VERSION = Pattern.compile(
 			"^#version 3[0-9]{2} es$", Pattern.MULTILINE);
+	private static final Pattern PATTERN_COMPUTE_SHADER = Pattern.compile(
+			"layout\\s*\\(\\s*local_size", Pattern.MULTILINE);
+	private static final String COMPUTE_SHADER_PREPEND =
+			"layout(r32ui) uniform coherent uimage2D computeTex[3];\n" +
+			"layout(r32ui) uniform coherent uimage2D computeTexBack[3];\n";
 	private static final String OES_EXTERNAL =
 			"#extension GL_OES_EGL_image_external : require\n";
 	private static final String OES_EXTERNAL_ESS3 =
@@ -252,6 +258,7 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 	private RotationVectorListener rotationVectorListener;
 	private OnRendererListener onRendererListener;
 	private String fragmentShader;
+	private boolean isComputeShader = false;
 	private int version = 2;
 	private int deviceRotation;
 	private int surfaceProgram = 0;
@@ -462,8 +469,10 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 		}
 
 		GLES20.glUseProgram(program);
-		GLES20.glVertexAttribPointer(positionLoc, 2, GLES20.GL_BYTE,
-				false, 0, vertexBuffer);
+		if (!isComputeShader) {
+			GLES20.glVertexAttribPointer(positionLoc, 2, GLES20.GL_BYTE,
+					false, 0, vertexBuffer);
+		}
 
 		final long now = System.nanoTime();
 		float delta = (now - startTime) / NS_PER_SECOND;
@@ -633,7 +642,30 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 		}
 
 		GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fb[frontTarget]);
-		GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+
+		if (isComputeShader) {
+			// Bind computeTex[0-2] (units 0-2) as read-write images
+			for (int i = 0; i < 3; i++) {
+				GLES31.glBindImageTexture(i, tx[frontTarget], 0, false, 0,
+						GLES31.GL_READ_WRITE, GLES31.GL_R32UI);
+			}
+
+			// Bind computeTexBack[0-2] (units 3-5) as read-only images (previous frame)
+			for (int i = 0; i < 3; i++) {
+				GLES31.glBindImageTexture(3 + i, tx[backTarget], 0, false, 0,
+						GLES31.GL_READ_ONLY, GLES31.GL_R32UI);
+			}
+
+			// Dispatch compute shader
+			int workGroupsX = ((int) resolution[0] + 15) / 16;
+			int workGroupsY = ((int) resolution[1] + 15) / 16;
+			GLES31.glDispatchCompute(workGroupsX, workGroupsY, 1);
+
+			// Memory barrier to ensure writes are visible
+			GLES31.glMemoryBarrier(GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+		} else {
+			GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+		}
 
 		// then draw framebuffer on screen
 		GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
@@ -797,22 +829,44 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 	}
 
 	private void loadPrograms() {
-		// Attempt to load the surface program
-		surfaceProgram = Program.loadProgram(VERTEX_SHADER, FRAGMENT_SHADER);
+		// Check if this is a compute shader
+		isComputeShader = PATTERN_COMPUTE_SHADER.matcher(fragmentShader).find();
 
-		// If the surface program fails to compile, submit errors and return
-		if (surfaceProgram == 0) {
-			submitErrors(Program.getInfoLog());
-			return;
-		}
+		if (isComputeShader) {
+			// For compute shaders, we don't need the surface program
+			surfaceProgram = Program.loadProgram(VERTEX_SHADER, FRAGMENT_SHADER);
+			if (surfaceProgram == 0) {
+				submitErrors(Program.getInfoLog());
+				return;
+			}
 
-		// Attempt to load the main program
-		program = Program.loadProgram(getVertexShader(), fragmentShader);
+			// Prepend compute shader declarations
+			String computeShaderSource = prependComputeShaderDeclarations(fragmentShader);
 
-		// If the main program fails to compile, submit errors and return
-		if (program == 0) {
-			submitErrors(Program.getInfoLog());
-			return;
+			// Load compute shader program
+			program = Program.loadComputeProgram(computeShaderSource);
+			if (program == 0) {
+				submitErrors(Program.getInfoLog());
+				return;
+			}
+		} else {
+			// Attempt to load the surface program
+			surfaceProgram = Program.loadProgram(VERTEX_SHADER, FRAGMENT_SHADER);
+
+			// If the surface program fails to compile, submit errors and return
+			if (surfaceProgram == 0) {
+				submitErrors(Program.getInfoLog());
+				return;
+			}
+
+			// Attempt to load the main program
+			program = Program.loadProgram(getVertexShader(), fragmentShader);
+
+			// If the main program fails to compile, submit errors and return
+			if (program == 0) {
+				submitErrors(Program.getInfoLog());
+				return;
+			}
 		}
 
 		// If both programs compiled successfully, log an empty list of errors
@@ -836,6 +890,20 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 	private String getGLES3Version(String source) {
 		Matcher m = PATTERN_GLES3_VERSION.matcher(source);
 		return version == 3 && m.find() ? m.group(0) : null;
+	}
+
+	private String prependComputeShaderDeclarations(String source) {
+		// Extract version directive
+		String version = getGLES3Version(source);
+		if (version == null) {
+			version = "#version 310 es";
+		}
+
+		// Remove version from source if present
+		String sourceWithoutVersion = source.replaceFirst("^#version[^\n]*\n", "");
+
+		// Prepend version and compute texture declarations
+		return version + "\n" + COMPUTE_SHADER_PREPEND + sourceWithoutVersion;
 	}
 
 	private void indexLocations() {
