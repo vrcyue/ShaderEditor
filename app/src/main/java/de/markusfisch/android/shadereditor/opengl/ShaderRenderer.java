@@ -185,6 +185,9 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 	private static final Pattern PATTERN_COMPUTE_SHADER = Pattern.compile(
 			"layout\\s*\\(\\s*local_size", Pattern.MULTILINE);
 	private static final String COMPUTE_SHADER_PREPEND =
+			"precision highp float;\n" +
+			"precision highp int;\n" +
+			"precision highp uimage2D;\n" +
 			"layout(r32ui) uniform coherent uimage2D computeTex[3];\n" +
 			"layout(r32ui) uniform coherent uimage2D computeTexBack[3];\n";
 	private static final String OES_EXTERNAL =
