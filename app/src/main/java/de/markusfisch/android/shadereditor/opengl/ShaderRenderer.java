@@ -182,20 +182,15 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 			Pattern.MULTILINE);
 	private static final Pattern PATTERN_GLES3_VERSION = Pattern.compile(
 			"^#version 3[0-9]{2} es$", Pattern.MULTILINE);
-	private static final Pattern PATTERN_COMPUTE_SHADER = Pattern.compile(
-			"layout\\s*\\(\\s*local_size", Pattern.MULTILINE);
+	private static final Pattern PATTERN_COMPUTE_TEX_DECL = Pattern.compile(
+			"uimage2D\\s+computeTex(Back)?\\s*\\[", Pattern.MULTILINE);
 	private static final Pattern PATTERN_IMAGE_OPS = Pattern.compile(
 			"imageLoad|imageStore", Pattern.MULTILINE);
-	private static final String COMPUTE_SHADER_PREPEND =
+	private static final String IMAGE_PRECISION_PREPEND =
 			"precision highp float;\n" +
 			"precision highp int;\n" +
-			"precision highp uimage2D;\n" +
-			"layout(r32ui) uniform coherent uimage2D computeTex[3];\n" +
-			"layout(r32ui) uniform coherent uimage2D computeTexBack[3];\n";
-	private static final String FRAGMENT_IMAGE_PREPEND =
-			"precision highp float;\n" +
-			"precision highp int;\n" +
-			"precision highp uimage2D;\n" +
+			"precision highp uimage2D;\n";
+	private static final String IMAGE_UNIFORMS_PREPEND =
 			"layout(r32ui) uniform coherent uimage2D computeTex[3];\n" +
 			"layout(r32ui) uniform coherent uimage2D computeTexBack[3];\n";
 	private static final String OES_EXTERNAL =
@@ -270,7 +265,6 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 	private RotationVectorListener rotationVectorListener;
 	private OnRendererListener onRendererListener;
 	private String fragmentShader;
-	private boolean isComputeShader = false;
 	private boolean useImageOps = false;
 	private int version = 2;
 	private int deviceRotation;
@@ -482,10 +476,8 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 		}
 
 		GLES20.glUseProgram(program);
-		if (!isComputeShader) {
-			GLES20.glVertexAttribPointer(positionLoc, 2, GLES20.GL_BYTE,
-					false, 0, vertexBuffer);
-		}
+		GLES20.glVertexAttribPointer(positionLoc, 2, GLES20.GL_BYTE,
+				false, 0, vertexBuffer);
 
 		final long now = System.nanoTime();
 		float delta = (now - startTime) / NS_PER_SECOND;
@@ -656,51 +648,29 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 
 		GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fb[frontTarget]);
 
-		if (isComputeShader) {
-			// Bind computeTex[0-2] (units 0-2) as read-write images
+		if (useImageOps) {
+			// Bind image textures for fragment shader
+			int currentSet = frontTarget % 2;
+			int previousSet = backTarget % 2;
+
+			// Bind computeTex[0-2] (current frame write targets)
 			for (int i = 0; i < 3; i++) {
-				GLES31.glBindImageTexture(i, tx[frontTarget], 0, false, 0,
+				GLES31.glBindImageTexture(i, imageTx[currentSet * 3 + i], 0, false, 0,
 						GLES31.GL_READ_WRITE, GLES31.GL_R32UI);
 			}
 
-			// Bind computeTexBack[0-2] (units 3-5) as read-only images (previous frame)
+			// Bind computeTexBack[0-2] (previous frame read sources)
 			for (int i = 0; i < 3; i++) {
-				GLES31.glBindImageTexture(3 + i, tx[backTarget], 0, false, 0,
+				GLES31.glBindImageTexture(3 + i, imageTx[previousSet * 3 + i], 0, false, 0,
 						GLES31.GL_READ_ONLY, GLES31.GL_R32UI);
 			}
+		}
 
-			// Dispatch compute shader
-			int workGroupsX = ((int) resolution[0] + 15) / 16;
-			int workGroupsY = ((int) resolution[1] + 15) / 16;
-			GLES31.glDispatchCompute(workGroupsX, workGroupsY, 1);
+		GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
 
+		if (useImageOps) {
 			// Memory barrier to ensure writes are visible
 			GLES31.glMemoryBarrier(GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-		} else {
-			if (useImageOps) {
-				// Bind image textures for fragment shader
-				int currentSet = frontTarget % 2;
-				int previousSet = backTarget % 2;
-
-				// Bind computeTex[0-2] (current frame write targets)
-				for (int i = 0; i < 3; i++) {
-					GLES31.glBindImageTexture(i, imageTx[currentSet * 3 + i], 0, false, 0,
-							GLES31.GL_READ_WRITE, GLES31.GL_R32UI);
-				}
-
-				// Bind computeTexBack[0-2] (previous frame read sources)
-				for (int i = 0; i < 3; i++) {
-					GLES31.glBindImageTexture(3 + i, imageTx[previousSet * 3 + i], 0, false, 0,
-							GLES31.GL_READ_ONLY, GLES31.GL_R32UI);
-				}
-			}
-
-			GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
-
-			if (useImageOps) {
-				// Memory barrier to ensure writes are visible
-				GLES31.glMemoryBarrier(GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-			}
 		}
 
 		// then draw framebuffer on screen
@@ -865,52 +835,30 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 	}
 
 	private void loadPrograms() {
-		// Check if this is a compute shader
-		isComputeShader = PATTERN_COMPUTE_SHADER.matcher(fragmentShader).find();
-
 		// Check if fragment shader uses image operations
-		useImageOps = !isComputeShader && PATTERN_IMAGE_OPS.matcher(fragmentShader).find();
+		useImageOps = PATTERN_IMAGE_OPS.matcher(fragmentShader).find();
 
-		if (isComputeShader) {
-			// For compute shaders, we don't need the surface program
-			surfaceProgram = Program.loadProgram(VERTEX_SHADER, FRAGMENT_SHADER);
-			if (surfaceProgram == 0) {
-				submitErrors(Program.getInfoLog());
-				return;
-			}
+		// Attempt to load the surface program
+		surfaceProgram = Program.loadProgram(VERTEX_SHADER, FRAGMENT_SHADER);
 
-			// Prepend compute shader declarations
-			String computeShaderSource = prependComputeShaderDeclarations(fragmentShader);
+		// If the surface program fails to compile, submit errors and return
+		if (surfaceProgram == 0) {
+			submitErrors(Program.getInfoLog());
+			return;
+		}
 
-			// Load compute shader program
-			program = Program.loadComputeProgram(computeShaderSource);
-			if (program == 0) {
-				submitErrors(Program.getInfoLog());
-				return;
-			}
-		} else {
-			// Attempt to load the surface program
-			surfaceProgram = Program.loadProgram(VERTEX_SHADER, FRAGMENT_SHADER);
+		// Prepend image declarations for fragment shaders if needed
+		String fragmentShaderSource = useImageOps
+				? prependFragmentImageDeclarations(fragmentShader)
+				: fragmentShader;
 
-			// If the surface program fails to compile, submit errors and return
-			if (surfaceProgram == 0) {
-				submitErrors(Program.getInfoLog());
-				return;
-			}
+		// Attempt to load the main program
+		program = Program.loadProgram(getVertexShader(), fragmentShaderSource);
 
-			// Prepend image declarations for fragment shaders if needed
-			String fragmentShaderSource = useImageOps
-					? prependFragmentImageDeclarations(fragmentShader)
-					: fragmentShader;
-
-			// Attempt to load the main program
-			program = Program.loadProgram(getVertexShader(), fragmentShaderSource);
-
-			// If the main program fails to compile, submit errors and return
-			if (program == 0) {
-				submitErrors(Program.getInfoLog());
-				return;
-			}
+		// If the main program fails to compile, submit errors and return
+		if (program == 0) {
+			submitErrors(Program.getInfoLog());
+			return;
 		}
 
 		// If both programs compiled successfully, log an empty list of errors
@@ -936,32 +884,28 @@ public class ShaderRenderer implements GLSurfaceView.Renderer {
 		return version == 3 && m.find() ? m.group(0) : null;
 	}
 
-	private String prependComputeShaderDeclarations(String source) {
-		// Extract version directive
+	private String prependFragmentImageDeclarations(String source) {
 		String version = getGLES3Version(source);
 		if (version == null) {
 			version = "#version 310 es";
 		}
 
-		// Remove version from source if present
 		String sourceWithoutVersion = source.replaceFirst("^#version[^\n]*\n", "");
 
-		// Prepend version and compute texture declarations
-		return version + "\n" + COMPUTE_SHADER_PREPEND + sourceWithoutVersion;
+		StringBuilder builder = new StringBuilder();
+		builder.append(version).append("\n").append(IMAGE_PRECISION_PREPEND);
+
+		// Only add computeTex declarations if the shader didn't define them already.
+		if (!hasComputeTexDeclarations(source)) {
+			builder.append(IMAGE_UNIFORMS_PREPEND);
+		}
+
+		builder.append(sourceWithoutVersion);
+		return builder.toString();
 	}
 
-	private String prependFragmentImageDeclarations(String source) {
-		// Extract version directive
-		String version = getGLES3Version(source);
-		if (version == null) {
-			version = "#version 310 es";
-		}
-
-		// Remove version from source if present
-		String sourceWithoutVersion = source.replaceFirst("^#version[^\n]*\n", "");
-
-		// Prepend version and fragment image declarations
-		return version + "\n" + FRAGMENT_IMAGE_PREPEND + sourceWithoutVersion;
+	private boolean hasComputeTexDeclarations(String source) {
+		return PATTERN_COMPUTE_TEX_DECL.matcher(source).find();
 	}
 
 	private void indexLocations() {

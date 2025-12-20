@@ -66,7 +66,7 @@ public class ShaderView extends GLSurfaceView {
 		// On some devices it's important to setEGLContextClientVersion()
 		// even if the docs say it's not used when setEGLContextFactory()
 		// is called. Not doing so will crash the app (e.g. on the FP1).
-		// Request GLES 3.1 for compute shader support
+		// Request GLES 3.1 for image load/store support
 		setEGLContextClientVersion(3);
 		setEGLContextFactory(new ContextFactory(renderer));
 		setRenderer(renderer);
@@ -91,7 +91,7 @@ public class ShaderView extends GLSurfaceView {
 		public EGLContext createContext(EGL10 egl, EGLDisplay display,
 				EGLConfig eglConfig) {
 			int EGL_CONTEXT_CLIENT_VERSION = 0x3098;
-			// Request GLES 3.1 for compute shader support
+			// Request GLES 3.1 for image load/store support
 			EGLContext context = egl.eglCreateContext(display, eglConfig,
 					EGL10.EGL_NO_CONTEXT, new int[]{
 							EGL_CONTEXT_CLIENT_VERSION,
