@@ -42,7 +42,7 @@ send some Bitcoin decimals to `bc1q2guk2rpll587aymrfadkdtpq32448x5khk5j8z`.
 * Supports multiple touches
 * Supports multiple render resolutions
 * Previously rendered frame in backbuffer texture
-* Fragment-side imageLoad/imageStore with `computeTex`/`computeTexBack` (see sample “Image feedback”)
+* Fragment-side imageLoad/imageStore with `computeTex`/`computeTexBack` (see sample “Image feedback”), inspired by [Bonzomatic-Compute](https://github.com/wrightwriter/Bonzomatic-Compute)
 * Import and use arbitrary textures
 * Create and use cube maps
 * Disables rendering when the battery is low
