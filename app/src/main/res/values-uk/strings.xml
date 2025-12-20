@@ -234,6 +234,8 @@
 	<string name="sample_game_of_life_rationale">Гра життя Конвея. Торкніться, щоб запалити нове життя.</string>
 	<string name="sample_gles_300_name">GLES 300</string>
 	<string name="sample_gles_300_rationale">Використовувати GLES версії 3.00</string>
+	<string name="sample_image_feedback_name">Image feedback</string>
+	<string name="sample_image_feedback_rationale">Fragment uses imageLoad/imageStore and computeTex backbuffer</string>
 	<string name="sample_gravity_name">Датчик сили тяжіння</string>
 	<string name="sample_gravity_rationale">Як використовувати форму гравітації</string>
 	<string name="sample_orientation_name">Орієнтація</string>
